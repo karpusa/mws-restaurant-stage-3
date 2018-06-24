@@ -1,49 +1,60 @@
 let restaurant;
 var map;
 
+window.addEventListener('DOMContentLoaded', (event) => {
+	if (navigator.serviceWorker) {
+	navigator.serviceWorker.register('serviceworker.js')
+		.then(reg => console.log(`sw registered, scope: ${reg.scope}`))
+.catch(err => console.error(`ERROR_REGISTERING_SW: ${err}`));
+}
+if (!navigator.onLine) {
+	DBHelper.fetchRestaurantById(DBHelper.getParameterByName('id'))
+		.then(restaurant => initMap(restaurant));
+}
+})
+
+window.addEventListener('load', (event) => {
+	connectionStatusHandler = (event) => {
+		const statusBox = document.getElementById('offline-status-box');
+		if (!navigator.onLine) {
+			statusBox.style.display = 'block';
+			document.getElementById('offline-status').innerHTML = 'Offline';
+		} else {
+			statusBox.style.display = 'none';
+			document.getElementById('offline-status').innerHTML = 'Online';
+			DBHelper.postCachedReviews();
+		}
+	}
+
+	window.addEventListener('online', connectionStatusHandler);
+	window.addEventListener('offline', connectionStatusHandler);
+});
+
 /**
  * Initialize Google map, called from HTML.
  */
-window.initMap = () => {
-  fetchRestaurantFromURL((error, restaurant) => {
-    if (error) { // Got an error!
-      console.error(error);
-    } else {
-      self.map = new google.maps.Map(document.getElementById('map'), {
-        zoom: 16,
-        center: restaurant.latlng,
-        scrollwheel: false
-      });
-      fillBreadcrumb();
-      DBHelper.mapMarkerForRestaurant(self.restaurant, self.map);
-    }
-  });
+initMap = (restaurant) => {
+	self.restaurant = restaurant;
+	if (navigator.onLine) {
+		self.map = new google.maps.Map(document.getElementById('map'), {
+			zoom: 16,
+			center: self.restaurant.latlng,
+			scrollwheel: false
+		});
+		DBHelper.mapMarkerForRestaurant(self.restaurant, self.map);
+	}
+	fillBreadcrumb();
+	fillRestaurantHTML();
 }
 
-/**
- * Get current restaurant from page URL.
- */
-fetchRestaurantFromURL = (callback) => {
-  if (self.restaurant) { // restaurant already fetched!
-    callback(null, self.restaurant)
-    return;
-  }
-  const id = getParameterByName('id');
-  if (!id) { // no id found in URL
-    error = 'No restaurant id in URL'
-    callback(error, null);
-  } else {
-    DBHelper.fetchRestaurantById(id, (error, restaurant) => {
-      self.restaurant = restaurant;
-      if (!restaurant) {
-        console.error(error);
-        return;
-      }
-      fillRestaurantHTML();
-      callback(null, restaurant)
-    });
-  }
+window.renderPage = () => {
+	if (self.restaurant) {
+		return;
+	}
+	DBHelper.fetchRestaurantById(DBHelper.getParameterByName('id'))
+		.then(restaurant => initMap(restaurant));
 }
+
 
 /**
  * Create restaurant HTML and add it to the webpage
@@ -67,8 +78,12 @@ fillRestaurantHTML = (restaurant = self.restaurant) => {
   if (restaurant.operating_hours) {
     fillRestaurantHoursHTML();
   }
-  // fill reviews
-  fillReviewsHTML();
+  DBHelper.fetchReviewsByRestaurantId(self.restaurant.id).then(reviews => setReviews(reviews));
+}
+
+setReviews = (reviews) => {
+	self.restaurant.reviews = reviews;
+	fillReviewsHTML();
 }
 
 /**
@@ -123,7 +138,7 @@ createReviewHTML = (review) => {
   li.appendChild(name);
 
   const date = document.createElement('p');
-  date.innerHTML = review.date;
+  date.innerHTML = new Date(review.createdAt);
   li.appendChild(date);
 
   const rating = document.createElement('p');
@@ -148,17 +163,40 @@ fillBreadcrumb = (restaurant=self.restaurant) => {
 }
 
 /**
- * Get a parameter by name from page URL.
+ * Add new review
  */
-getParameterByName = (name, url) => {
-  if (!url)
-    url = window.location.href;
-  name = name.replace(/[\[\]]/g, '\\$&');
-  const regex = new RegExp(`[?&]${name}(=([^&#]*)|&|#|$)`),
-    results = regex.exec(url);
-  if (!results)
-    return null;
-  if (!results[2])
-    return '';
-  return decodeURIComponent(results[2].replace(/\+/g, ' '));
+addReviewHTML = (review, reviews = self.restaurant.reviews) => {
+	const container = document.getElementById('reviews-container');
+	const ul = document.getElementById('reviews-list');
+	ul.prepend(createReviewHTML(review));
+	container.append(ul);
+}
+
+/**
+ * review form submit handler
+ */
+reviewFormHandler = (restaurant = self.restaurant) => {
+	const review = {
+		name: document.getElementById('username').value,
+		rating: parseInt(document.getElementById('rating').value),
+		comments: document.getElementById('comment').value,
+		createdAt: +new Date(),
+		updatedAt: +new Date(),
+		restaurant_id: restaurant.id
+	};
+	addReviewHTML(review);
+	if (navigator.onLine) {
+		DBHelper.postReview(review)
+			.then(resp => {
+			if (!resp) {
+			document.getElementById('form-legend').innerHTML = 'An Unexpected Error Occured, Please Try Again Later.';
+		} else {
+			document.getElementById('form-legend').innerHTML = 'Your Review Has Been Saved, Thank You For Sharing Your Thoughts.';
+			document.getElementById('reviews-form').reset();
+		}
+	})
+	.catch(err => console.error(`ERROR_SAVING_REVIEW: ${err}`));
+	} else {
+		DBHelper.cacheObject(review, DBHelper.REVIEWS_OFFLINE_IDB_NAME, DBHelper.REVIEWS_OFFLINE_STORE_NAME);
+	}
 }

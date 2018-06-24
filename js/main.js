@@ -8,23 +8,38 @@ var markers = [];
  * Fetch neighborhoods and cuisines as soon as the page is loaded.
  */
 document.addEventListener('DOMContentLoaded', (event) => {
-  fetchNeighborhoods();
-  fetchCuisines();
+	if (navigator.serviceWorker) {
+	navigator.serviceWorker.register('serviceworker.js')
+		.then(reg => console.log(`ServiceWorker registered, scope: ${reg.scope}`))
+.catch(err => console.error(`ERROR_REGISTERING_SW: ${err}`));
+}
+DBHelper.fetchNeighborhoods()
+	.then(neighborhoods => fillNeighborhoodsHTML(neighborhoods));
+
+DBHelper.fetchCuisines()
+	.then(cuisines => fillCuisinesHTML(cuisines));
+
+//google maps fetching screwing me up have to updateRestaurant manually here
+if (!navigator.onLine) {
+	updateRestaurants();
+}
 });
 
-/**
- * Fetch all neighborhoods and set their HTML.
- */
-fetchNeighborhoods = () => {
-  DBHelper.fetchNeighborhoods((error, neighborhoods) => {
-    if (error) { // Got an error
-      console.error(error);
+window.addEventListener('load', (event) => {
+	connectionStatusHandler = (event) => {
+	const statusBox = document.getElementById('offline-status-box');
+    if (!navigator.onLine) {
+        statusBox.style.display = 'block';
+        document.getElementById('offline-status').innerHTML = 'Offline';
     } else {
-      self.neighborhoods = neighborhoods;
-      fillNeighborhoodsHTML();
+      statusBox.style.display = 'none';
+      document.getElementById('offline-status').innerHTML = 'Online';
     }
-  });
-}
+  }
+
+  window.addEventListener('online', connectionStatusHandler);
+  window.addEventListener('offline', connectionStatusHandler);
+});
 
 /**
  * Set neighborhoods HTML.
@@ -36,20 +51,6 @@ fillNeighborhoodsHTML = (neighborhoods = self.neighborhoods) => {
     option.innerHTML = neighborhood;
     option.value = neighborhood;
     select.append(option);
-  });
-}
-
-/**
- * Fetch all cuisines and set their HTML.
- */
-fetchCuisines = () => {
-  DBHelper.fetchCuisines((error, cuisines) => {
-    if (error) { // Got an error!
-      console.error(error);
-    } else {
-      self.cuisines = cuisines;
-      fillCuisinesHTML();
-    }
   });
 }
 
@@ -88,23 +89,18 @@ window.initMap = () => {
  * Update page and map for current restaurants.
  */
 updateRestaurants = () => {
-  const cSelect = document.getElementById('cuisines-select');
-  const nSelect = document.getElementById('neighborhoods-select');
+	const cSelect = document.getElementById('cuisines-select');
+	const nSelect = document.getElementById('neighborhoods-select');
 
-  const cIndex = cSelect.selectedIndex;
-  const nIndex = nSelect.selectedIndex;
+	const cIndex = cSelect.selectedIndex;
+	const nIndex = nSelect.selectedIndex;
 
-  const cuisine = cSelect[cIndex].value;
-  const neighborhood = nSelect[nIndex].value;
+	const cuisine = cSelect[cIndex].value;
+	const neighborhood = nSelect[nIndex].value;
 
-  DBHelper.fetchRestaurantByCuisineAndNeighborhood(cuisine, neighborhood, (error, restaurants) => {
-    if (error) { // Got an error!
-      console.error(error);
-    } else {
-      resetRestaurants(restaurants);
-      fillRestaurantsHTML();
-    }
-  })
+	DBHelper.fetchRestaurantByCuisineAndNeighborhood(neighborhood, cuisine).then(restaurants => {
+		resetRestaurants(restaurants);
+    }).then(() => fillRestaurantsHTML());
 }
 
 /**
